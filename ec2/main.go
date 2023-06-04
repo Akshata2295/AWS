@@ -5,6 +5,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -17,9 +18,9 @@ import (
 func main() {
 	router := gin.Default()
 
-	router.POST("/upload", uploadImage)
+	router.POST("/image/ec2", uploadImage)
 
-	err := router.Run(":8080")
+	err := router.Run(":9000")
 	if err != nil {
 		log.Fatal("Failed to start the server:", err)
 	}
@@ -49,10 +50,10 @@ func saveImageToS3(file *multipart.FileHeader) error {
 	defer src.Close()
 
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("us-west-1"),
+		Region: aws.String(os.Getenv("AWS_REGION")),
 		Credentials: credentials.NewStaticCredentials(
-			"YOUR_AWS_ACCESS_KEY_ID",
-			"YOUR_AWS_SECRET_ACCESS_KEY",
+			os.Getenv("AWS_ACCESS_KEY_ID"),
+			os.Getenv("AWS_SECRET_ACCESS_KEY"),
 			""),
 	})
 	if err != nil {
@@ -65,7 +66,7 @@ func saveImageToS3(file *multipart.FileHeader) error {
 	s3Key := fmt.Sprintf("images/%s", fileName)
 
 	_, err = s3Svc.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String("YOUR_S3_BUCKET_NAME"),
+		Bucket: aws.String(os.Getenv("AWS_BUCKET_NAME")),
 		Key:    aws.String(s3Key),
 		Body:   src,
 	})
