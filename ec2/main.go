@@ -3,76 +3,78 @@ package main
 import (
 	"fmt"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	router := gin.Default()
+	r := gin.Default()
+	r.Static("/images", "/home/ubuntu/images/")
+	r.GET("/files", getFilesHandler)
+	r.POST("/image/ec2", uploadFileHandler)
 
-	router.POST("/image/ec2", uploadImage)
-
-	err := router.Run(":9000")
+	err := r.Run("0.0.0.0:9000")
 	if err != nil {
-		log.Fatal("Failed to start the server:", err)
+		log.Fatal(err)
 	}
 }
 
-func uploadImage(c *gin.Context) {
+// Handler for retrieving the list of files
+func getFilesHandler(c *gin.Context) {
+	dirPath := "/home/ubuntu/images" // Specify the directory path relative to the `/images` route
+
+	// Retrieve the list of files in the directory
+	files, err := getFilesInDirectory(dirPath)
+	if err != nil {
+		c.String(http.StatusInternalServerError, fmt.Sprintf("Error retrieving files: %s", err.Error()))
+		return
+	}
+
+	// Generate a slice of file links
+	links := make([]string, 0)
+	for _, file := range files {
+		fileLink := fmt.Sprintf("http://35.154.84.78:9000/images/%s", file.Name())
+		links = append(links, fileLink)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"files": links,
+	})
+}
+
+// Handler for uploading a file
+func uploadFileHandler(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to retrieve the file"})
+		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
 
-	err = saveImageToS3(file)
+	// Save the file to the desired location on the EC2 instance
+	err = c.SaveUploadedFile(file, "/home/ubuntu/images/"+file.Filename)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload the image"})
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Image uploaded successfully"})
+	c.JSON(http.StatusOK, gin.H {
+		 "File uploaded successfully": file.Filename,
+})
 }
 
-func saveImageToS3(file *multipart.FileHeader) error {
-	src, err := file.Open()
+// Retrieve the list of files in a directory
+func getFilesInDirectory(dirPath string) ([]os.FileInfo, error) {
+	dir, err := os.Open(dirPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer src.Close()
+	defer dir.Close()
 
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(os.Getenv("AWS_REGION")),
-		Credentials: credentials.NewStaticCredentials(
-			os.Getenv("AWS_ACCESS_KEY_ID"),
-			os.Getenv("AWS_SECRET_ACCESS_KEY"),
-			""),
-	})
+	files, err := dir.Readdir(-1)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	s3Svc := s3.New(sess)
-
-	fileName := filepath.Base(file.Filename)
-	s3Key := fmt.Sprintf("images/%s", fileName)
-
-	_, err = s3Svc.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(os.Getenv("AWS_BUCKET_NAME")),
-		Key:    aws.String(s3Key),
-		Body:   src,
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return files, nil
 }
